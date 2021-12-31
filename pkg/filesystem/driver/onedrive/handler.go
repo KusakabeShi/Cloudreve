@@ -12,7 +12,9 @@ import (
 	"time"
 
 	model "github.com/cloudreve/Cloudreve/v3/models"
+	"github.com/cloudreve/Cloudreve/v3/pkg/auth"
 	"github.com/cloudreve/Cloudreve/v3/pkg/cache"
+	"github.com/cloudreve/Cloudreve/v3/pkg/filesystem/driver"
 	"github.com/cloudreve/Cloudreve/v3/pkg/filesystem/fsctx"
 	"github.com/cloudreve/Cloudreve/v3/pkg/filesystem/response"
 	"github.com/cloudreve/Cloudreve/v3/pkg/request"
@@ -24,6 +26,16 @@ type Driver struct {
 	Policy     *model.Policy
 	Client     *Client
 	HTTPClient request.Client
+}
+
+// NewDriver 从存储策略初始化新的Driver实例
+func NewDriver(policy *model.Policy) (driver.Handler, error) {
+	client, err := NewClient(policy)
+	return Driver{
+		Policy:     policy,
+		Client:     client,
+		HTTPClient: request.NewClient(),
+	}, err
 }
 
 // List 列取项目
@@ -152,8 +164,26 @@ func (handler Driver) Source(
 	isDownload bool,
 	speed int,
 ) (string, error) {
+	cacheKey := fmt.Sprintf("onedrive_source_%d_%s", handler.Policy.ID, path)
+	if file, ok := ctx.Value(fsctx.FileModelCtx).(model.File); ok {
+		cacheKey = fmt.Sprintf("onedrive_source_file_%d_%d", file.UpdatedAt.Unix(), file.ID)
+		// 如果是永久链接，则返回签名后的中转外链
+		if ttl == 0 {
+			signedURI, err := auth.SignURI(
+				auth.General,
+				fmt.Sprintf("/api/v3/file/source/%d/%s", file.ID, file.Name),
+				ttl,
+			)
+			if err != nil {
+				return "", err
+			}
+			return baseURL.ResolveReference(signedURI).String(), nil
+		}
+
+	}
+
 	// 尝试从缓存中查找
-	if cachedURL, ok := cache.Get(fmt.Sprintf("onedrive_source_%d_%s", handler.Policy.ID, path)); ok {
+	if cachedURL, ok := cache.Get(cacheKey); ok {
 		return handler.replaceSourceHost(cachedURL.(string))
 	}
 
@@ -162,7 +192,7 @@ func (handler Driver) Source(
 	if err == nil {
 		// 写入新的缓存
 		cache.Set(
-			fmt.Sprintf("onedrive_source_%d_%s", handler.Policy.ID, path),
+			cacheKey,
 			res.DownloadURL,
 			model.GetIntSetting("onedrive_source_timeout", 1800),
 		)

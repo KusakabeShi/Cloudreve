@@ -16,6 +16,7 @@ type database struct {
 	TablePrefix string
 	DBFile      string
 	Port        int
+	Charset     string
 }
 
 // system 系统通用配置
@@ -69,9 +70,13 @@ type redis struct {
 
 // 缩略图 配置
 type thumb struct {
-	MaxWidth   uint
-	MaxHeight  uint
-	FileSuffix string `validate:"min=1"`
+	MaxWidth      uint
+	MaxHeight     uint
+	FileSuffix    string `validate:"min=1"`
+	MaxTaskCount  int
+	EncodeMethod  string `validate:"eq=jpg|eq=png"`
+	EncodeQuality int    `validate:"gte=1,lte=100"`
+	GCAfterGen    bool
 }
 
 // 跨域配置

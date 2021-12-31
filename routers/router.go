@@ -2,6 +2,8 @@ package routers
 
 import (
 	"github.com/cloudreve/Cloudreve/v3/middleware"
+	"github.com/cloudreve/Cloudreve/v3/pkg/auth"
+	"github.com/cloudreve/Cloudreve/v3/pkg/cluster"
 	"github.com/cloudreve/Cloudreve/v3/pkg/conf"
 	"github.com/cloudreve/Cloudreve/v3/pkg/hashid"
 	"github.com/cloudreve/Cloudreve/v3/pkg/util"
@@ -29,7 +31,9 @@ func InitSlaveRouter() *gin.Engine {
 	InitCORS(r)
 	v3 := r.Group("/api/v3/slave")
 	// 鉴权中间件
-	v3.Use(middleware.SignRequired())
+	v3.Use(middleware.SignRequired(auth.General))
+	// 主机信息解析
+	v3.Use(middleware.MasterMetadata())
 
 	/*
 		路由
@@ -37,6 +41,10 @@ func InitSlaveRouter() *gin.Engine {
 	{
 		// Ping
 		v3.POST("ping", controllers.SlavePing)
+		// 测试 Aria2 RPC 连接
+		v3.POST("ping/aria2", controllers.AdminTestAria2)
+		// 接收主机心跳包
+		v3.POST("heartbeat", controllers.SlaveHeartbeat)
 		// 上传
 		v3.POST("upload", controllers.SlaveUpload)
 		// 下载
@@ -49,6 +57,28 @@ func InitSlaveRouter() *gin.Engine {
 		v3.POST("delete", controllers.SlaveDelete)
 		// 列出文件
 		v3.POST("list", controllers.SlaveList)
+
+		// 离线下载
+		aria2 := v3.Group("aria2")
+		aria2.Use(middleware.UseSlaveAria2Instance(cluster.DefaultController))
+		{
+			// 创建离线下载任务
+			aria2.POST("task", controllers.SlaveAria2Create)
+			// 获取任务状态
+			aria2.POST("status", controllers.SlaveAria2Status)
+			// 取消离线下载任务
+			aria2.POST("cancel", controllers.SlaveCancelAria2Task)
+			// 选取任务文件
+			aria2.POST("select", controllers.SlaveSelectTask)
+			// 删除任务临时文件
+			aria2.POST("delete", controllers.SlaveDeleteTempFile)
+		}
+
+		// 异步任务
+		task := v3.Group("task")
+		{
+			task.PUT("transfer", controllers.SlaveCreateTransferTask)
+		}
 	}
 	return r
 }
@@ -116,21 +146,22 @@ func InitMasterRouter() *gin.Engine {
 		user := v3.Group("user")
 		{
 			// 用户登录
-			user.POST("session", controllers.UserLogin)
+			user.POST("session", middleware.CaptchaRequired("login_captcha"), controllers.UserLogin)
 			// 用户注册
 			user.POST("",
 				middleware.IsFunctionEnabled("register_enabled"),
+				middleware.CaptchaRequired("reg_captcha"),
 				controllers.UserRegister,
 			)
 			// 用二步验证户登录
 			user.POST("2fa", controllers.User2FALogin)
 			// 发送密码重设邮件
-			user.POST("reset", controllers.UserSendReset)
+			user.POST("reset", middleware.CaptchaRequired("forget_captcha"), controllers.UserSendReset)
 			// 通过邮件里的链接重设密码
 			user.PATCH("reset", controllers.UserReset)
 			// 邮件激活
 			user.GET("activate/:id",
-				middleware.SignRequired(),
+				middleware.SignRequired(auth.General),
 				middleware.HashID(hashid.UserID),
 				controllers.UserActivate,
 			)
@@ -158,17 +189,31 @@ func InitMasterRouter() *gin.Engine {
 
 		// 需要携带签名验证的
 		sign := v3.Group("")
-		sign.Use(middleware.SignRequired())
+		sign.Use(middleware.SignRequired(auth.General))
 		{
 			file := sign.Group("file")
 			{
-				// 文件外链
+				// 文件外链（直接输出文件数据）
 				file.GET("get/:id/:name", controllers.AnonymousGetContent)
+				// 文件外链(301跳转)
+				file.GET("source/:id/:name", controllers.AnonymousPermLink)
 				// 下載已经打包好的文件
 				file.GET("archive/:id/archive.zip", controllers.DownloadArchive)
 				// 下载文件
 				file.GET("download/:id", controllers.Download)
 			}
+		}
+
+		// 从机的 RPC 通信
+		slave := v3.Group("slave")
+		slave.Use(middleware.SlaveRPCSignRequired(cluster.Default))
+		{
+			// 事件通知
+			slave.PUT("notification/:subject", controllers.SlaveNotificationPush)
+			// 上传
+			slave.POST("upload", controllers.SlaveUpload)
+			// OneDrive 存储策略凭证
+			slave.GET("credential/onedrive/:id", controllers.SlaveGetOneDriveCredential)
 		}
 
 		// 回调接口
@@ -402,6 +447,22 @@ func InitMasterRouter() *gin.Engine {
 					task.POST("import", controllers.AdminCreateImportTask)
 				}
 
+				node := admin.Group("node")
+				{
+					// 列出从机节点
+					node.POST("list", controllers.AdminListNodes)
+					// 列出从机节点
+					node.POST("aria2/test", controllers.AdminTestAria2)
+					// 创建/保存节点
+					node.POST("", controllers.AdminAddNode)
+					// 启用/暂停节点
+					node.PATCH("enable/:id/:desired", controllers.AdminToggleNode)
+					// 删除节点
+					node.DELETE(":id", controllers.AdminDeleteNode)
+					// 获取节点
+					node.GET(":id", controllers.AdminGetNode)
+				}
+
 			}
 
 			// 用户
@@ -510,6 +571,8 @@ func InitMasterRouter() *gin.Engine {
 				object.POST("copy", controllers.Copy)
 				// 重命名对象
 				object.POST("rename", controllers.Rename)
+				// 获取对象属性
+				object.GET("property/:id", controllers.GetProperty)
 			}
 
 			// 分享

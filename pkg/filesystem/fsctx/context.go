@@ -29,8 +29,8 @@ const (
 	ShareKeyCtx
 	// LimitParentCtx 限制父目录
 	LimitParentCtx
-	// IgnoreConflictCtx 忽略重名冲突
-	IgnoreConflictCtx
+	// IgnoreDirectoryConflictCtx 忽略目录重名冲突
+	IgnoreDirectoryConflictCtx
 	// RetryCtx 失败重试次数
 	RetryCtx
 	// ForceUsePublicEndpointCtx 强制使用公网 Endpoint
@@ -39,4 +39,8 @@ const (
 	CancelFuncCtx
 	// ValidateCapacityOnceCtx 限定归还容量的操作只執行一次
 	ValidateCapacityOnceCtx
+	// 禁止上传时同名覆盖操作
+	DisableOverwrite
+	// 文件在从机节点中的路径
+	SlaveSrcPath
 )

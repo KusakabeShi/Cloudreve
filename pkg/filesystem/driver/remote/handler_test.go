@@ -34,7 +34,7 @@ func TestHandler_Token(t *testing.T) {
 		},
 		AuthInstance: auth.HMACAuth{},
 	}
-	ctx := context.Background()
+	ctx := context.WithValue(context.Background(), fsctx.DisableOverwrite, true)
 	auth.General = auth.HMACAuth{SecretKey: []byte("test")}
 
 	// 成功
@@ -48,6 +48,7 @@ func TestHandler_Token(t *testing.T) {
 		asserts.Equal(uint64(10), policy.MaxSize)
 		asserts.Equal(true, policy.AutoRename)
 		asserts.Equal("dir", policy.SavePath)
+		asserts.Equal("file", policy.FileName)
 		asserts.Equal("file", policy.FileName)
 		asserts.Equal([]string{"txt"}, policy.AllowedExtension)
 	}
@@ -104,7 +105,7 @@ func TestHandler_Source(t *testing.T) {
 	// 解析失败 自定义CDN
 	{
 		handler := Driver{
-			Policy:       &model.Policy{Server: "/", BaseURL: string(0x7f)},
+			Policy:       &model.Policy{Server: "/", BaseURL: string([]byte{0x7f})},
 			AuthInstance: auth.HMACAuth{},
 		}
 		file := model.File{
